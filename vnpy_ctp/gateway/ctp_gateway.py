@@ -3,6 +3,7 @@ from datetime import datetime
 from time import sleep
 from typing import Dict, List, Tuple
 from pathlib import Path
+sys.path.append('/home/main_server/futures/vnpy')
 
 from vnpy.event import EventEngine
 from vnpy.trader.constant import (

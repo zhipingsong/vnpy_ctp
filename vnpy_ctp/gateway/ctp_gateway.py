@@ -1,9 +1,13 @@
 import sys
+from pathlib import Path
 from datetime import datetime
 from time import sleep
 from typing import Dict, List, Tuple
 from pathlib import Path
-sys.path.append('/home/main_server/futures/vnpy')
+# sys.path.append('/home/main_server/futures/vnpy')
+
+import json
+from kafka import KafkaProducer
 
 from vnpy.event import EventEngine
 from vnpy.trader.constant import (
@@ -262,6 +266,14 @@ class CtpMdApi(MdApi):
 
         self.current_date: str = datetime.now().strftime("%Y%m%d")
 
+        self.producer = KafkaProducer(
+            bootstrap_servers=['192.168.1.202:9092'],
+            value_serializer=lambda m: json.dumps(m).encode('utf-8')
+        )
+
+        self.topic_tick = "tick" 
+        self.topic_bar = "bar" 
+
     def onFrontConnected(self) -> None:
         """服务器连接成功回报"""
         self.gateway.write_log("行情服务器连接成功")
@@ -294,17 +306,48 @@ class CtpMdApi(MdApi):
 
         self.gateway.write_error("行情订阅失败", error)
 
+    def on_send_success(self, record_metadata):
+        pass
+
+    def on_send_error(self, excp):
+        self.gateway.write_error('I am an errback', exc_info=excp)
+
+
     def onRtnDepthMarketData(self, data: dict) -> None:
         """行情数据推送"""
         # 过滤没有时间戳的异常行情数据
         if not data["UpdateTime"]:
             return
 
+
         # 过滤还没有收到合约数据前的行情推送
         symbol: str = data["InstrumentID"]
         contract: ContractData = symbol_contract_map.get(symbol, None)
         if not contract:
             return
+        
+        if contract.exchange == Exchange.CFFEX:
+            partition = 1
+        elif contract.exchange == Exchange.SHFE:
+            partition = 2
+        elif contract.exchange == Exchange.CZCE:
+            partition = 3
+        elif contract.exchange == Exchange.DCE:
+            partition = 4
+        elif contract.exchange == Exchange.INE:
+            partition = 5
+        elif contract.exchange == Exchange.GFEX:
+            partition = 6
+        else:
+            partition = 0
+
+        # print(contract.exchange.value)
+        # Kafka中 key必须为binary形式
+        self.producer.send(
+            self.topic_tick,
+            partition=partition,
+            key=data["InstrumentID"].encode('ascii'),
+            value=data).add_callback(self.on_send_success).add_errback(self.on_send_error)
 
         # 对大商所的交易日字段取本地日期
         if not data["ActionDay"] or contract.exchange == Exchange.DCE:
